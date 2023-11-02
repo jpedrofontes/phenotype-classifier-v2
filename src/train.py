@@ -22,16 +22,22 @@ def objective(trial):
     batch_size = 512
 
     if args.optimize_hyperparameters:
-        dropout_rate = trial.suggest_float("dropout_rate", 0.1, 0.5)
-        n_layers = trial.suggest_int("n_layers", 1, 10)
-        layers = []
+        n_ae_layers = trial.suggest_int("n_layers", 1, 10)
+        ae_layers = []
 
-        for i in range(n_layers):
-            layers.append(trial.suggest_int(f"n_units_l{i}", 50, 400))
+        for i in range(n_ae_layers):
+            ae_layers.append(trial.suggest_int(f"ae_units_l{i}", 50, 400))
 
         latent_dim = trial.suggest_int("latent_dim", 16, 256)
-        lr = trial.suggest_float("dropout_rate", 0.1, 1e-5)
-        lr_decay = trial.suggest_float("dropout_rate", 0.999, 0.85)
+        n_mlp_layers = trial.suggest_int("n_mlp_layers", 1, 10)
+        mlp_layers = []
+
+        for i in range(n_mlp_layers):
+            mlp_layers.append(trial.suggest_int(f"mlp_units_l{i}", 50, 400))
+                
+        dropout_rate = trial.suggest_float("dropout_rate", 0.1, 0.5)
+        lr = trial.suggest_float("lr", 0.1, 1e-5)
+        lr_decay = trial.suggest_float("lr_decay", 0.999, 0.85)
     else:
         ae_layers = [512, 256, 128]
         latent_dim = 64
@@ -76,6 +82,9 @@ def objective(trial):
         args.positive_class,
         mlp_layers,
         dropout_rate=dropout_rate,
+        # fine_tuning = False,
+        lr = lr,
+        lr_decay = lr_decay
     )
 
     # # Weights Initialization
