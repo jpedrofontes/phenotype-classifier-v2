@@ -3,7 +3,7 @@ import torch
 
 
 class MLP(torch.nn.Module):
-    def __init__(self, input_dim, layers, dropout_rate) -> None:
+    def __init__(self, input_dim, layers=[512, 256, 128, 64], dropout_rate=0.1) -> None:
         super().__init__()
         layers_list = []
         prev_dim = input_dim
@@ -11,10 +11,11 @@ class MLP(torch.nn.Module):
         for layer_dim in layers:
             layers_list.append(torch.nn.Linear(prev_dim, layer_dim))
             layers_list.append(torch.nn.Tanh())
-            layers_list.append(torch.nn.Dropout(dropout_rate))
             prev_dim = layer_dim
 
+        layers_list.append(torch.nn.Dropout(dropout_rate))
         layers_list.append(torch.nn.Linear(prev_dim, 1))
+        layers_list.append(torch.nn.Tanh())
         self.network = torch.nn.Sequential(*layers_list)
 
     def forward(self, x):
