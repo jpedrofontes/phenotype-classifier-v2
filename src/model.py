@@ -23,82 +23,93 @@ class MLP(torch.nn.Module):
 
 
 class AutoEncoder(torch.nn.Module):
-    def __init__(
-        self,
-        input_dim: (int, int, int),
-        hidden_dims: [int],
-        latent_dim: int,
-        dropout_rate: float,
-    ):
+    def __init__(self, input_dim, hidden_dims, latent_dim, dropout_rate):
         super(AutoEncoder, self).__init__()
         self.hidden_dims = hidden_dims
 
-        depth, height, width = input_dim
-        channels = 1
-
-        # Calculate resize factors
-        self.depth_factor = depth // (2 ** len(hidden_dims)) ** 2
-        self.height_factor = height // (2 ** len(hidden_dims)) ** 2
-        self.width_factor = width // (2 ** len(hidden_dims)) ** 2
-
         # Encoder
-        encoder_layers = []
-        prev_channels = channels
-
-        for next_channels in hidden_dims:
-            encoder_layers.append(
-                torch.nn.Conv3d(
-                    prev_channels, next_channels, kernel_size=3, stride=2, padding=1
+        modules = []
+        in_channels = 1  # Assuming input has one channel; change if different
+        for h_dim in hidden_dims:
+            modules.append(
+                torch.nn.Sequential(
+                    torch.nn.Conv3d(
+                        in_channels, h_dim, kernel_size=3, stride=2, padding=1
+                    ),
+                    torch.nn.BatchNorm3d(h_dim),
+                    torch.nn.ReLU(),
                 )
             )
-            encoder_layers.append(torch.nn.ReLU())
-            encoder_layers.append(torch.nn.MaxPool3d(2))
-            prev_channels = next_channels
+            in_channels = h_dim
 
-        self.encoder = torch.nn.Sequential(*encoder_layers)
+        self.encoder = torch.nn.Sequential(*modules)
 
-        # Calculate the flattened size of the encoder output
-        self.flattened_size = (
-            prev_channels * self.depth_factor * self.height_factor * self.width_factor
-        )
+        # Determine the size of the encoded representation
+        with torch.no_grad():
+            self.sample_input = torch.zeros(1, *input_dim).unsqueeze(
+                0
+            )  # Create a sample input
+            self.sample_encoded = self.encoder(self.sample_input)
+            self.flattened_size = int(
+                torch.prod(torch.tensor(self.sample_encoded.size()[1:]))
+            )
+
+        # Fully connected layers
         self.fc1 = torch.nn.Linear(self.flattened_size, latent_dim)
         self.fc2 = torch.nn.Linear(latent_dim, self.flattened_size)
 
         # Decoder
-        decoder_layers = []
+        modules = []
+        hidden_dims.reverse()  # Reverse the hidden dimensions for decoding
 
-        for next_channels in reversed(hidden_dims[:-1]):
-            decoder_layers.append(torch.nn.Upsample(scale_factor=2, mode="trilinear"))
-            decoder_layers.append(
-                torch.nn.ConvTranspose3d(
-                    prev_channels, next_channels, kernel_size=3, stride=1, padding=1
+        for i in range(len(hidden_dims) - 1):
+            modules.append(
+                torch.nn.Sequential(
+                    torch.nn.ConvTranspose3d(
+                        hidden_dims[i],
+                        hidden_dims[i + 1],
+                        kernel_size=3,
+                        stride=2,  # Adjust these parameters as needed
+                        padding=1,
+                        output_padding=1
+                    ),
+                    torch.nn.BatchNorm3d(hidden_dims[i + 1]),
+                    torch.nn.ReLU()
                 )
             )
-            decoder_layers.append(torch.nn.ReLU())
-            prev_channels = next_channels
 
-        decoder_layers.append(torch.nn.Upsample(scale_factor=2, mode="trilinear"))
-        decoder_layers.append(
-            torch.nn.ConvTranspose3d(
-                prev_channels, channels, kernel_size=3, stride=1, padding=1
+        # Assuming the input has 1 channel
+        final_output_channels = 1  
+        modules.append(
+            torch.nn.Sequential(
+                torch.nn.ConvTranspose3d(
+                    hidden_dims[-1],
+                    final_output_channels,  # Adjusted to match the input channels
+                    kernel_size=3,
+                    stride=2,  # Adjust these parameters as needed
+                    padding=1,
+                    output_padding=1
+                ),
+                torch.nn.BatchNorm3d(final_output_channels),
+                torch.nn.ReLU()
             )
         )
-        self.decoder = torch.nn.Sequential(*decoder_layers)
+        self.decoder = torch.nn.Sequential(*modules)
 
-    def forward(self, x):
-        tmp = self.encoder(x)
-        tmp = tmp.view(-1, self.flattened_size)  # Flatten op
-        z = self.fc1(tmp)  # Latent representation
-        tmp_hat = self.fc2(z)
-        tmp_hat = tmp_hat.view(
-            tmp_hat.size(0),
-            self.hidden_dims[-1],
-            self.depth_factor,
-            self.height_factor,
-            self.width_factor,
-        )  # Reverse flatten
-        x_hat = self.decoder(tmp_hat)
-        return x_hat, z
+
+    def forward(self, X):
+        if X.ndim == 4:
+            X = X.unsqueeze(1)  # Add channel dimension
+            
+        # Encoding
+        encoded = self.encoder(X)
+        encoded_flat = encoded.view(encoded.size(0), -1)
+        z = self.fc1(encoded_flat)
+        decoded_flat = self.fc2(z)
+        decoded_flat = decoded_flat.view(decoded_flat.size(0), *self.sample_encoded.size()[1:])
+        X_hat = self.decoder(decoded_flat).squeeze(1)
+
+        return X_hat, z
 
 
 class QIBModel(pl.LightningModule):
@@ -120,8 +131,8 @@ class QIBModel(pl.LightningModule):
         self.ae = AutoEncoder(input_dim, ae_hidden_dims, latent_dim, dropout_rate)
 
         # MLP classifier for
+        self.positive_class = positive_class
         if positive_class is not None:
-            self.positive_class = positive_class
             self.mlp = MLP(latent_dim, mlp_layers, dropout_rate)
 
         # Custom loss function for singular or bundle training
@@ -151,7 +162,7 @@ class QIBModel(pl.LightningModule):
             return self.loss_func(score, Y, self.positive_class)
         else:
             return self.loss_func(X_hat, X)
-        
+
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
         scheduler = torch.optim.lr_scheduler.ExponentialLR(
@@ -165,7 +176,7 @@ class QIBModel(pl.LightningModule):
 
 
 class QIBLoss(torch.nn.Module):
-    def __init__(self, alpha: float=1.0) -> None:
+    def __init__(self, alpha: float = 1.0) -> None:
         super().__init__()
         self.alpha = alpha
 

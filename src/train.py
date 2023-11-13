@@ -34,7 +34,7 @@ def objective(trial):
 
         for i in range(n_mlp_layers):
             mlp_layers.append(trial.suggest_int(f"mlp_units_l{i}", 50, 400))
-                
+
         dropout_rate = trial.suggest_float("dropout_rate", 0.1, 0.5)
         lr = trial.suggest_float("lr", 0.1, 1e-5)
         lr_decay = trial.suggest_float("lr_decay", 0.999, 0.85)
@@ -83,8 +83,8 @@ def objective(trial):
         mlp_layers,
         dropout_rate=dropout_rate,
         # fine_tuning = False,
-        lr = lr,
-        lr_decay = lr_decay
+        lr=lr,
+        lr_decay=lr_decay,
     )
 
     # # Weights Initialization

@@ -97,7 +97,7 @@ class Dataset(torch.utils.data.Dataset):
 
         for img_path in self.volumes[volume_name]["slices"]:
             # Read the image
-            img = Image.open(img_path)  # .convert('RGB')
+            img = Image.open(img_path).convert("L")  # 'L' mode for grayscale
             img = img.resize((self.crop_size[0], self.crop_size[1]))
             img = np.array(img)
             # Add to volume
@@ -114,7 +114,6 @@ class Dataset(torch.utils.data.Dataset):
         volume[volume > max] = max
         volume = (volume - min) / (max - min)
         volume = volume.astype("float32")
-
         return volume
 
     def resize_volume(
@@ -169,7 +168,7 @@ class Dataset(torch.utils.data.Dataset):
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
-    
+
     # Seeds for reproducibility
     np.random.seed(123)
 
@@ -182,31 +181,37 @@ if __name__ == "__main__":
     print("\nCases/Series: %d" % len(dataset.volumes_idx))
     key = dataset.volumes_idx[0]
     print("\nExample:\n\nCase/Series: %s" % key)
-    print("Phenotype: %s => %s" % (
-        dataset.volumes[key]["phenotype"], phenotypes[dataset.volumes[key]["phenotype"]]))
-    print("Number of tumor slices: %d" % len(dataset.volumes[key]["slices"]))  
+    print(
+        "Phenotype: %s => %s"
+        % (
+            dataset.volumes[key]["phenotype"],
+            phenotypes[dataset.volumes[key]["phenotype"]],
+        )
+    )
+    print("Number of tumor slices: %d" % len(dataset.volumes[key]["slices"]))
     volume, _ = dataset[0]
     print(f"\nVolume shape (after pre-processing): {volume.shape}")
 
     fig = plt.figure()
-    fig.suptitle("Tumor Phenotype: {}".format(
-        phenotypes[dataset.volumes[key]["phenotype"]]))
+    fig.suptitle(
+        "Tumor Phenotype: {}".format(phenotypes[dataset.volumes[key]["phenotype"]])
+    )
     ax = plt.subplot(2, 3, 1)
-    ax.title.set_text('Slice 1')
+    ax.title.set_text("Slice 1")
     plt.imshow(volume[0, :, :].T)
     ax = plt.subplot(2, 3, 2)
-    ax.title.set_text('Slice 20')
+    ax.title.set_text("Slice 20")
     plt.imshow(volume[19, :, :].T)
     ax = plt.subplot(2, 3, 3)
-    ax.title.set_text('Slice 30')
+    ax.title.set_text("Slice 30")
     plt.imshow(volume[29, :].T)
     ax = plt.subplot(2, 3, 4)
-    ax.title.set_text('Slice 40')
+    ax.title.set_text("Slice 40")
     plt.imshow(volume[39, :, :].T)
     ax = plt.subplot(2, 3, 5)
-    ax.title.set_text('Slice 50')
+    ax.title.set_text("Slice 50")
     plt.imshow(volume[49, :, :].T)
     ax = plt.subplot(2, 3, 6)
-    ax.title.set_text('Slice 64')
+    ax.title.set_text("Slice 64")
     plt.imshow(volume[63, :, :].T)
     plt.show()
