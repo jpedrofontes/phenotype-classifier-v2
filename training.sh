@@ -16,4 +16,4 @@ source /home/mguevaral/jpedro/phenotype-classifier-v2/venv/bin/activate
 module load CUDA
 module load cuDNN
 
-python /home/mguevaral/jpedro/phenotype-classifier-v2/src/train.py -d /data/mguevaral/crop_bbox_sample/ -o models/ -l logs/ 
+python /home/mguevaral/jpedro/phenotype-classifier-v2/src/train.py -d /data/mguevaral/crop_bbox/ -o /home/mguevaral/jpedro/phenotype-classifier-v2/models/ -l /home/mguevaral/jpedro/phenotype-classifier-v2/logs/ "$@"

@@ -14,6 +14,7 @@ import optuna as op
 import pytorch_lightning as pl
 import torch
 torch.cuda.empty_cache()
+import tensorboard
 
 from dataset import Dataset
 from model import QIBModel
@@ -123,7 +124,7 @@ def objective(trial):
     trainer = pl.Trainer(
         max_epochs=max_epochs,
         callbacks=callbacks,
-        precision="64",
+        precision="16",
         log_every_n_steps=1,
         logger=logger,
         enable_progress_bar=False,
