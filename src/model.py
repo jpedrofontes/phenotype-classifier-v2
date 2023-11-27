@@ -36,11 +36,12 @@ class AutoEncoder(torch.nn.Module):
                     torch.nn.Conv3d(
                         in_channels, h_dim, kernel_size=3, stride=2, padding=1
                     ),
-                    torch.nn.BatchNorm3d(h_dim),
+                    # torch.nn.BatchNorm3d(h_dim),
                     torch.nn.ReLU(),
                 )
             )
             in_channels = h_dim
+        modules.append(torch.nn.Dropout(dropout_rate))
 
         self.encoder = torch.nn.Sequential(*modules)
 
@@ -73,7 +74,7 @@ class AutoEncoder(torch.nn.Module):
                         padding=1,
                         output_padding=1
                     ),
-                    torch.nn.BatchNorm3d(hidden_dims[i + 1]),
+                    # torch.nn.BatchNorm3d(hidden_dims[i + 1]),
                     torch.nn.ReLU()
                 )
             )
@@ -90,24 +91,25 @@ class AutoEncoder(torch.nn.Module):
                     padding=1,
                     output_padding=1
                 ),
-                torch.nn.BatchNorm3d(final_output_channels),
+                # torch.nn.BatchNorm3d(final_output_channels),
                 torch.nn.ReLU()
             )
         )
+        modules.append(torch.nn.Dropout(dropout_rate))
         self.decoder = torch.nn.Sequential(*modules)
 
 
     def forward(self, X):
         if X.ndim == 4:
-            X = X.unsqueeze(1)  # Add channel dimension
-            
+            X = X.unsqueeze(1).contiguous()  # Add channel dimension and ensure it's contiguous
+
         # Encoding
         encoded = self.encoder(X)
-        encoded_flat = encoded.view(encoded.size(0), -1)
+        encoded_flat = encoded.view(encoded.size(0), -1).contiguous()
         z = self.fc1(encoded_flat)
         decoded_flat = self.fc2(z)
-        decoded_flat = decoded_flat.view(decoded_flat.size(0), *self.sample_encoded.size()[1:])
-        X_hat = self.decoder(decoded_flat).squeeze(1)
+        decoded_flat = decoded_flat.view(decoded_flat.size(0), *self.sample_encoded.size()[1:]).contiguous()
+        X_hat = self.decoder(decoded_flat).squeeze(1).contiguous()
 
         return X_hat, z
 
@@ -149,9 +151,20 @@ class QIBModel(pl.LightningModule):
 
         if self.positive_class is not None:
             score = self.mlp(z)
-            return self.loss_func(X_hat, Y, score)
+            loss = self.loss_func(X_hat, Y, score)
         else:
-            return self.loss_func(X_hat, X)
+            loss = self.loss_func(X_hat, X)
+            
+        self.log(
+            "loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )
+        
+        return loss 
 
     def validation_step(self, batch, batch_idx):
         X, Y = batch
@@ -159,9 +172,20 @@ class QIBModel(pl.LightningModule):
 
         if self.positive_class is not None:
             score = self.mlp(z)
-            return self.loss_func(score, Y, self.positive_class)
+            loss = self.loss_func(score, Y, self.positive_class)
         else:
-            return self.loss_func(X_hat, X)
+            loss = self.loss_func(X_hat, X)
+        
+        self.log(
+            "val_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            logger=True,
+        )
+        
+        return loss
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.lr)

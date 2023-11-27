@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import uuid
 
 # Get the absolute path of the parent directory
 parent_dir = os.getcwd()
@@ -12,6 +13,7 @@ import numpy as np
 import optuna as op
 import pytorch_lightning as pl
 import torch
+torch.cuda.empty_cache()
 
 from dataset import Dataset
 from model import QIBModel
@@ -19,32 +21,32 @@ from model import QIBModel
 
 def objective(trial):
     max_epochs = 5000
-    batch_size = 512
+    batch_size = 2
 
     if args.optimize_hyperparameters:
-        n_ae_layers = trial.suggest_int("n_layers", 1, 10)
+        n_ae_layers = trial.suggest_int("n_layers", 1, 5)
         ae_layers = []
 
         for i in range(n_ae_layers):
-            ae_layers.append(trial.suggest_int(f"ae_units_l{i}", 50, 400))
+            ae_layers.append(trial.suggest_categorical(f"ae_units_l{i}", [16, 32, 64, 128, 256]))
 
-        latent_dim = trial.suggest_int("latent_dim", 16, 256)
+        latent_dim = trial.suggest_categorical("latent_dim", [16, 32, 64, 128, 256])
         n_mlp_layers = trial.suggest_int("n_mlp_layers", 1, 10)
         mlp_layers = []
 
         for i in range(n_mlp_layers):
-            mlp_layers.append(trial.suggest_int(f"mlp_units_l{i}", 50, 400))
+            mlp_layers.append(trial.suggest_categorical(f"mlp_units_l{i}", [16, 32, 64, 128, 256]))
 
-        dropout_rate = trial.suggest_float("dropout_rate", 0.1, 0.5)
-        lr = trial.suggest_float("lr", 0.1, 1e-5)
-        lr_decay = trial.suggest_float("lr_decay", 0.999, 0.85)
+        dropout_rate = trial.suggest_float("dropout_rate", 0.1, 0.3)
+        lr = trial.suggest_float("lr", 1e-6, 1e-3)
+        lr_decay = trial.suggest_float("lr_decay", 0.85, 0.99)
     else:
-        ae_layers = [512, 256, 128]
+        ae_layers = [256, 128]
         latent_dim = 64
-        mlp_layers = [512, 256, 128, 64]
-        dropout_rate = 0.15
-        lr = 1e-3
-        lr_decay = 0.99
+        mlp_layers = [256, 128]
+        dropout_rate = 0.1
+        lr = 0.0001
+        lr_decay = 0.96
 
     # Data
     dataset = Dataset(args.dataset_path)
@@ -62,10 +64,10 @@ def objective(trial):
 
     # Create data loaders
     train_dataloader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=128
     )
     test_dataloader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=False
+        test_dataset, batch_size=batch_size, shuffle=False, num_workers=128
     )
 
     # Dataset insights
@@ -120,12 +122,11 @@ def objective(trial):
     logger = pl.loggers.TensorBoardLogger(args.logs_path)
     trainer = pl.Trainer(
         max_epochs=max_epochs,
-        benchmark=True,
         callbacks=callbacks,
         precision="64",
-        profiler="simple",
-        log_every_n_steps=2,
+        log_every_n_steps=1,
         logger=logger,
+        enable_progress_bar=False,
     )
     trainer.fit(model, train_dataloader, test_dataloader)
     print("Done!")
@@ -160,7 +161,7 @@ if __name__ == "__main__":
 
     # Hyperparameter optimization
     if args.optimize_hyperparameters:
-        study_name = "phenotype_classifier"
+        study_name = str(uuid.uuid4())
         storage_name = "sqlite:///{}.db".format(study_name)
         study = op.create_study(
             study_name=study_name,

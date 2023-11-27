@@ -1,8 +1,9 @@
+matplotlib
 numpy
+optuna
 pandas
 Pillow
-scipy
-torch
 pytorch_lightning
-optuna
+scipy
 tensorboard
+torch
