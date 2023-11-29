@@ -167,51 +167,37 @@ class Dataset(torch.utils.data.Dataset):
 
 
 if __name__ == "__main__":
-    import matplotlib.pyplot as plt
+    import sys
+    import torch
 
-    # Seeds for reproducibility
-    np.random.seed(123)
+    from model import AutoEncoder
 
-    BASE_PATH = "/home/jpedrofontes/phenotype-classifier-v2/"
-    BASE_DATA_PATH = "/home/jpedrofontes/phenotype-classifier-v2/dataset/"
+    # Best params for auto encoder
+    # TODO: Read from json config
+    ae_layers = [64, 32]
+    latent_dim = 128
+    dropout_rate = 0.1
+    batch_size = 1
 
-    dataset = Dataset(f"{BASE_DATA_PATH}/crop_bbox", crop_size=(64, 128, 128))
-    print(dataset.get_dims())
-
-    print("\nCases/Series: %d" % len(dataset.volumes_idx))
-    key = dataset.volumes_idx[0]
-    print("\nExample:\n\nCase/Series: %s" % key)
-    print(
-        "Phenotype: %s => %s"
-        % (
-            dataset.volumes[key]["phenotype"],
-            phenotypes[dataset.volumes[key]["phenotype"]],
-        )
+    # Load the MRI dataset
+    dataset = Dataset(sys.argv[1])
+    dataloader = torch.utils.data.DataLoader(
+        dataset, batch_size=batch_size, shuffle=True, num_workers=128
     )
-    print("Number of tumor slices: %d" % len(dataset.volumes[key]["slices"]))
-    volume, _ = dataset[0]
-    print(f"\nVolume shape (after pre-processing): {volume.shape}")
 
-    fig = plt.figure()
-    fig.suptitle(
-        "Tumor Phenotype: {}".format(phenotypes[dataset.volumes[key]["phenotype"]])
+    # Load auto encoder model from checkpoint
+    autoencoder = AutoEncoder(
+        input_dim=(64, 128, 128),
+        hidden_dims=ae_layers,
+        latent_dim=latent_dim,
+        dropout_rate=dropout_rate,
     )
-    ax = plt.subplot(2, 3, 1)
-    ax.title.set_text("Slice 1")
-    plt.imshow(volume[0, :, :].T)
-    ax = plt.subplot(2, 3, 2)
-    ax.title.set_text("Slice 20")
-    plt.imshow(volume[19, :, :].T)
-    ax = plt.subplot(2, 3, 3)
-    ax.title.set_text("Slice 30")
-    plt.imshow(volume[29, :].T)
-    ax = plt.subplot(2, 3, 4)
-    ax.title.set_text("Slice 40")
-    plt.imshow(volume[39, :, :].T)
-    ax = plt.subplot(2, 3, 5)
-    ax.title.set_text("Slice 50")
-    plt.imshow(volume[49, :, :].T)
-    ax = plt.subplot(2, 3, 6)
-    ax.title.set_text("Slice 64")
-    plt.imshow(volume[63, :, :].T)
-    plt.show()
+    autoencoder.load_state_dict(torch.load(sys.argv[2]))
+    autoencoder.eval()
+
+    # Get Z from auto encoder and associate with the phenotype
+    z_data = []
+
+    for x, y in iter(dataloader):
+        x_hat, z = autoencoder(x)
+        z_data.append((z, [y]))
