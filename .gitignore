@@ -2,6 +2,7 @@
 dataset/
 models/
 logs/
+studies/
 .vscode/
 
 

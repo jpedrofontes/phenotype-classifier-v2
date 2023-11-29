@@ -1,4 +1,5 @@
 import argparse
+import gc
 import os
 import sys
 import uuid
@@ -13,8 +14,9 @@ import numpy as np
 import optuna as op
 import pytorch_lightning as pl
 import torch
+
 torch.cuda.empty_cache()
-import tensorboard
+torch.set_float32_matmul_precision("medium")
 
 from dataset import Dataset
 from model import QIBModel
@@ -32,21 +34,28 @@ def objective(trial):
             ae_layers.append(trial.suggest_categorical(f"ae_units_l{i}", [16, 32, 64, 128, 256]))
 
         latent_dim = trial.suggest_categorical("latent_dim", [16, 32, 64, 128, 256])
-        n_mlp_layers = trial.suggest_int("n_mlp_layers", 1, 10)
-        mlp_layers = []
+        
+        if args.positive_class is not None:
+            n_mlp_layers = trial.suggest_int("n_mlp_layers", 1, 10)
+            mlp_layers = []
 
-        for i in range(n_mlp_layers):
-            mlp_layers.append(trial.suggest_categorical(f"mlp_units_l{i}", [16, 32, 64, 128, 256]))
+            for i in range(n_mlp_layers):
+                mlp_layers.append(trial.suggest_categorical(f"mlp_units_l{i}", [16, 32, 64, 128, 256]))
+        else:
+            mlp_layers = []
 
-        dropout_rate = trial.suggest_float("dropout_rate", 0.1, 0.3)
+        dropout_rate = trial.suggest_categorical("dropout_rate", [0.1, 0.2, 0.3])
         lr = trial.suggest_float("lr", 1e-6, 1e-3)
         lr_decay = trial.suggest_float("lr_decay", 0.85, 0.99)
     else:
-        ae_layers = [256, 128]
-        latent_dim = 64
-        mlp_layers = [256, 128]
+        ae_layers = [64, 32]
+        latent_dim = 128
+        if args.positive_class is not None:
+            mlp_layers = [256, 128]
+        else:
+            mlp_layers = []
         dropout_rate = 0.1
-        lr = 0.0001
+        lr = 1e-6
         lr_decay = 0.96
 
     # Data
@@ -104,7 +113,7 @@ def objective(trial):
     # Train loop
     callbacks = [
         pl.callbacks.early_stopping.EarlyStopping(
-            monitor="val_loss", patience=30, verbose=True, mode="min", min_delta=0.001
+            monitor="val_loss", patience=10, verbose=True, mode="min", min_delta=0.001
         ),
         pl.callbacks.model_checkpoint.ModelCheckpoint(
             dirpath=args.output_path,
@@ -124,7 +133,7 @@ def objective(trial):
     trainer = pl.Trainer(
         max_epochs=max_epochs,
         callbacks=callbacks,
-        precision="16",
+        precision="16-mixed",
         log_every_n_steps=1,
         logger=logger,
         enable_progress_bar=False,
@@ -162,15 +171,15 @@ if __name__ == "__main__":
 
     # Hyperparameter optimization
     if args.optimize_hyperparameters:
-        study_name = str(uuid.uuid4())
-        storage_name = "sqlite:///{}.db".format(study_name)
+        # study_name = str(uuid.uuid4())
+        storage_name = "sqlite:///studies/autoencoder.db"
         study = op.create_study(
-            study_name=study_name,
+            study_name="autoencoder",
             storage=storage_name,
             load_if_exists=True,
             direction="minimize",
         )
-        study.optimize(objective, n_trials=1000)
+        study.optimize(objective, n_trials=1000, gc_after_trial=True)
         print(study.best_params)
     else:
         objective(None)

@@ -161,7 +161,8 @@ class QIBModel(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            logger=True,
+            logger=True, 
+            sync_dist=True
         )
         
         return loss 
@@ -182,7 +183,8 @@ class QIBModel(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            logger=True,
+            logger=True, 
+            sync_dist=True
         )
         
         return loss
