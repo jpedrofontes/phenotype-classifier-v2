@@ -19,76 +19,89 @@ phenotypes = {
 
 class Dataset(torch.utils.data.Dataset):
     def __init__(
-        self, base_path: str, crop_size=(64, 128, 128), positive_class: int = 0
+        self, base_path: str, crop_size=(64, 128, 128), positive_class: int = None
     ):
         super().__init__()
         self.base_path = base_path
         self.crop_size = crop_size
         self.volumes = dict()
-
-        # Read class csv file
-        classes_csv = pd.read_csv(os.path.join(self.base_path, "classes.csv"))
-
-        # Build dataset info
-        os.chdir(base_path)
-        print("Reading dataset...")
-
-        for file in glob.glob("*.jpg"):
-            # Get the case number of the image
-            match_case = re.search("Breast_MRI_[0-9]+", file)
-            case = file[match_case.start() : match_case.end()]
-
-            if case is None:
-                print("will continue case none")
-                continue
-
-            # Get the series of the image
-            match_series = re.search("_series#.+#_", file)
-            series = file[match_series.start() : match_series.end()]
-
-            if series is None:
-                print("will continue series none")
-                continue
-
-            # Save volume info
-            volume_name = "{}.{}".format(case, series)
-
-            # Match the case number with the phenotype class
-            phenotype = classes_csv.loc[classes_csv["patient_id"] == case][
-                "mol_subtype"
-            ]
-
-            if phenotype is None:
-                continue
-            else:
-                phenotype = phenotype.tolist()[0]
-                try:
-                    self.volumes[volume_name]["case"] = case
-                    self.volumes[volume_name]["slices"].append(
-                        os.path.join(base_path, file)
-                    )
-                    self.volumes[volume_name]["slices"].sort()
-                    self.volumes[volume_name]["phenotype"] = phenotype
-                except:
-                    self.volumes[volume_name] = dict()
-                    self.volumes[volume_name]["case"] = case
-                    self.volumes[volume_name]["slices"] = [
-                        os.path.join(base_path, file)
-                    ]
-                    self.volumes[volume_name]["phenotype"] = phenotype
-
-        self.volumes_idx = list(self.volumes.keys())
         self.positive_class = positive_class
 
+        if self.positive_class is None:
+            # Read class csv file
+            classes_csv = pd.read_csv(os.path.join(self.base_path, "classes.csv"))
+
+            # Build dataset info
+            os.chdir(base_path)
+            print("Reading dataset...")
+
+            for file in glob.glob("*.jpg"):
+                # Get the case number of the image
+                match_case = re.search("Breast_MRI_[0-9]+", file)
+                case = file[match_case.start() : match_case.end()]
+
+                if case is None:
+                    print("will continue case none")
+                    continue
+
+                # Get the series of the image
+                match_series = re.search("_series#.+#_", file)
+                series = file[match_series.start() : match_series.end()]
+
+                if series is None:
+                    print("will continue series none")
+                    continue
+
+                # Save volume info
+                volume_name = "{}.{}".format(case, series)
+
+                # Match the case number with the phenotype class
+                phenotype = classes_csv.loc[classes_csv["patient_id"] == case][
+                    "mol_subtype"
+                ]
+
+                if phenotype is None:
+                    continue
+                else:
+                    phenotype = phenotype.tolist()[0]
+                    try:
+                        self.volumes[volume_name]["case"] = case
+                        self.volumes[volume_name]["slices"].append(
+                            os.path.join(base_path, file)
+                        )
+                        self.volumes[volume_name]["slices"].sort()
+                        self.volumes[volume_name]["phenotype"] = phenotype
+                    except:
+                        self.volumes[volume_name] = dict()
+                        self.volumes[volume_name]["case"] = case
+                        self.volumes[volume_name]["slices"] = [
+                            os.path.join(base_path, file)
+                        ]
+                        self.volumes[volume_name]["phenotype"] = phenotype
+
+            self.volumes_idx = list(self.volumes.keys())
+        else:
+            self.z_data = pd.read_csv(os.path.join(self.base_path, "z_data.csv"))
+
     def __len__(self):
-        return len(self.volumes_idx)
+        if self.positive_class is None:
+            return len(self.volumes_idx)
+        else:
+            return len(self.z_data)
 
     def __getitem__(self, idx: int):
-        X = self.process_scan(self.volumes_idx[idx])
+        if self.positive_class is None:
+            X = self.process_scan(self.volumes_idx[idx])
 
-        # Consider one phenotype as 1 and the other as 0
-        phenotype = self.volumes[self.volumes_idx[idx]]["phenotype"]
-        y = 1 if phenotype == self.positive_class else 0
+            # Consider one phenotype as 1 and the other as 0
+            y = self.volumes[self.volumes_idx[idx]]["phenotype"]
+
+        else:
+            row = self.z_data.iloc[idx]
+            features = row.iloc[:-1].to_numpy()
+            label = 1 if row.iloc[-1] == self.positive_class else 0
+            X = torch.tensor(features, dtype=torch.float32)
+            y = torch.tensor(label, dtype=torch.int)
 
         return X, y
 
@@ -163,7 +176,10 @@ class Dataset(torch.utils.data.Dataset):
         return volume
 
     def get_dims(self):
-        return (self.crop_size, 1)
+        if self.positive_class is None:
+            return (self.crop_size, 1)
+        else:
+            return(len(self.z_data.columns) - 1, 1)
 
 
 if __name__ == "__main__":
@@ -203,10 +219,10 @@ if __name__ == "__main__":
 
     for x, y in iter(dataloader):
         x_hat, z = model(x.cuda())
-        
+
         # Flatten z if it's multidimensional and convert to list
         z_flat = z.view(-1).tolist()
-        
+
         # Append label y to the flattened z list
         z_data.append(z_flat + [int(y)])
 

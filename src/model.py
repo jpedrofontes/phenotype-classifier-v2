@@ -133,13 +133,12 @@ class QIBModel(pl.LightningModule):
     ):
         super().__init__()
 
-        # AutoEncoder
-        self.ae = AutoEncoder(input_dim, ae_hidden_dims, latent_dim, dropout_rate)
-
-        # MLP classifier for
         self.positive_class = positive_class
+        
         if positive_class is not None:
             self.mlp = MLP(latent_dim, mlp_layers, dropout_rate)
+        else:
+            self.ae = AutoEncoder(input_dim, ae_hidden_dims, latent_dim, dropout_rate)
 
         # Custom loss function for singular or bundle training
         if fine_tuning:
