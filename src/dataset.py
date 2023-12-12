@@ -167,37 +167,48 @@ class Dataset(torch.utils.data.Dataset):
 
 
 if __name__ == "__main__":
+    import csv
     import sys
     import torch
 
-    from model import AutoEncoder
+    from model import QIBModel
 
     # Best params for auto encoder
     # TODO: Read from json config
-    ae_layers = [64, 32]
-    latent_dim = 128
-    dropout_rate = 0.1
-    batch_size = 1
+    model_params = {
+        "input_dim": (64, 128, 128),
+        "ae_hidden_dims": [64, 32],
+        "latent_dim": 128,
+        "positive_class": None,
+        "mlp_layers": [],
+        "dropout_rate": 0.1,
+        "fine_tuning": False,
+        "lr": 1e-6,
+        "lr_decay": 0.96,
+    }
 
     # Load the MRI dataset
     dataset = Dataset(sys.argv[1])
     dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=batch_size, shuffle=True, num_workers=128
+        dataset, batch_size=1, shuffle=True, num_workers=128
     )
 
     # Load auto encoder model from checkpoint
-    autoencoder = AutoEncoder(
-        input_dim=(64, 128, 128),
-        hidden_dims=ae_layers,
-        latent_dim=latent_dim,
-        dropout_rate=dropout_rate,
-    )
-    autoencoder.load_state_dict(torch.load(sys.argv[2]))
-    autoencoder.eval()
+    model = QIBModel.load_from_checkpoint(sys.argv[2], **model_params)
+    model = model.to('cuda')
+    model.eval()
 
     # Get Z from auto encoder and associate with the phenotype
     z_data = []
 
     for x, y in iter(dataloader):
-        x_hat, z = autoencoder(x)
+        x_hat, z = model(x)
         z_data.append((z, [y]))
+
+    with open(sys.argv[3], mode="w", newline="") as file:
+        writer = csv.writer(file)
+        for z, y in z_data:
+            row = z.tolist() + y  # Assuming z is a tensor, convert it to a list
+            writer.writerow(row)
+
+    print(f"z_data exported to {sys.argv[3]}")

@@ -1,3 +1,4 @@
+from typing import Any
 import pytorch_lightning as pl
 import torch
 
@@ -72,15 +73,15 @@ class AutoEncoder(torch.nn.Module):
                         kernel_size=3,
                         stride=2,  # Adjust these parameters as needed
                         padding=1,
-                        output_padding=1
+                        output_padding=1,
                     ),
                     # torch.nn.BatchNorm3d(hidden_dims[i + 1]),
-                    torch.nn.ReLU()
+                    torch.nn.ReLU(),
                 )
             )
 
         # Assuming the input has 1 channel
-        final_output_channels = 1  
+        final_output_channels = 1
         modules.append(
             torch.nn.Sequential(
                 torch.nn.ConvTranspose3d(
@@ -89,26 +90,29 @@ class AutoEncoder(torch.nn.Module):
                     kernel_size=3,
                     stride=2,  # Adjust these parameters as needed
                     padding=1,
-                    output_padding=1
+                    output_padding=1,
                 ),
                 # torch.nn.BatchNorm3d(final_output_channels),
-                torch.nn.ReLU()
+                torch.nn.ReLU(),
             )
         )
         modules.append(torch.nn.Dropout(dropout_rate))
         self.decoder = torch.nn.Sequential(*modules)
 
-
     def forward(self, X):
         if X.ndim == 4:
-            X = X.unsqueeze(1).contiguous()  # Add channel dimension and ensure it's contiguous
+            X = X.unsqueeze(
+                1
+            ).contiguous()  # Add channel dimension and ensure it's contiguous
 
         # Encoding
         encoded = self.encoder(X)
         encoded_flat = encoded.view(encoded.size(0), -1).contiguous()
         z = self.fc1(encoded_flat)
         decoded_flat = self.fc2(z)
-        decoded_flat = decoded_flat.view(decoded_flat.size(0), *self.sample_encoded.size()[1:]).contiguous()
+        decoded_flat = decoded_flat.view(
+            decoded_flat.size(0), *self.sample_encoded.size()[1:]
+        ).contiguous()
         X_hat = self.decoder(decoded_flat).squeeze(1).contiguous()
 
         return X_hat, z
@@ -154,18 +158,18 @@ class QIBModel(pl.LightningModule):
             loss = self.loss_func(X_hat, Y, score)
         else:
             loss = self.loss_func(X_hat, X)
-            
+
         self.log(
             "loss",
             loss,
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            logger=True, 
-            sync_dist=True
+            logger=True,
+            sync_dist=True,
         )
-        
-        return loss 
+
+        return loss
 
     def validation_step(self, batch, batch_idx):
         X, Y = batch
@@ -176,18 +180,26 @@ class QIBModel(pl.LightningModule):
             loss = self.loss_func(score, Y, self.positive_class)
         else:
             loss = self.loss_func(X_hat, X)
-        
+
         self.log(
             "val_loss",
             loss,
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            logger=True, 
-            sync_dist=True
+            logger=True,
+            sync_dist=True,
         )
-        
+
         return loss
+
+    def forward(self, x):
+        # TODO: support hole pipeline when fine tuning
+        if self.positive_class is None:
+            (_, z) = self.ae(x)
+            return z
+        else:
+            return self.mlp(x)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
