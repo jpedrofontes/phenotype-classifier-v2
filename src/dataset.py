@@ -195,20 +195,24 @@ if __name__ == "__main__":
 
     # Load auto encoder model from checkpoint
     model = QIBModel.load_from_checkpoint(sys.argv[2], **model_params)
-    model = model.to('cuda')
+    model = model.to("cuda")
     model.eval()
 
     # Get Z from auto encoder and associate with the phenotype
     z_data = []
 
     for x, y in iter(dataloader):
-        x_hat, z = model(x)
-        z_data.append((z, [y]))
+        x_hat, z = model(x.cuda())
+        
+        # Flatten z if it's multidimensional and convert to list
+        z_flat = z.view(-1).tolist()
+        
+        # Append label y to the flattened z list
+        z_data.append(z_flat + [int(y)])
 
     with open(sys.argv[3], mode="w", newline="") as file:
         writer = csv.writer(file)
-        for z, y in z_data:
-            row = z.tolist() + y  # Assuming z is a tensor, convert it to a list
+        for row in z_data:
             writer.writerow(row)
 
     print(f"z_data exported to {sys.argv[3]}")

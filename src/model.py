@@ -196,8 +196,7 @@ class QIBModel(pl.LightningModule):
     def forward(self, x):
         # TODO: support hole pipeline when fine tuning
         if self.positive_class is None:
-            (_, z) = self.ae(x)
-            return z
+            return self.ae(x)
         else:
             return self.mlp(x)
 
