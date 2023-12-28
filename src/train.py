@@ -74,10 +74,10 @@ def objective(trial):
 
     # Create data loaders
     train_dataloader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=128
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=8
     )
     test_dataloader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=False, num_workers=128
+        test_dataset, batch_size=batch_size, shuffle=False, num_workers=8
     )
 
     # Dataset insights

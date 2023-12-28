@@ -154,6 +154,8 @@ class QIBModel(pl.LightningModule):
 
         if self.positive_class is not None:
             score = self.mlp(X)
+            score = score.view(-1)
+            Y = Y.view(-1)
             loss = self.loss_func(score, Y)
         else:
             X_hat, z = self.ae(X)
@@ -176,6 +178,8 @@ class QIBModel(pl.LightningModule):
 
         if self.positive_class is not None:
             score = self.mlp(X)
+            score = score.view(-1)
+            Y = Y.view(-1)
             loss = self.loss_func(score, Y)
         else:
             X_hat, z = self.ae(X)
@@ -235,12 +239,8 @@ class QIBLoss(torch.nn.Module):
 
     def forward(self, pred, target):
         if self.positive_class is not None:
-            pred = pred.squeeze()
-            pred_binary = (pred >= 0.5).float()
-            target = target.float()
-
             return torch.nn.functional.binary_cross_entropy_with_logits(
-                pred_binary, target, pos_weight=self.class_weights[1]
+                pred, target.float(), pos_weight=self.class_weights[1]
             )
         else:
             return torch.nn.functional.mse_loss(pred, target)
