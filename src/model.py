@@ -130,11 +130,12 @@ class QIBModel(pl.LightningModule):
         fine_tuning: bool = False,
         lr: float = 1e-3,
         lr_decay: float = 0.99,
+        class_counts: list = None,
     ):
         super().__init__()
 
         self.positive_class = positive_class
-        
+
         if positive_class is not None:
             self.mlp = MLP(latent_dim, mlp_layers, dropout_rate)
         else:
@@ -144,18 +145,18 @@ class QIBModel(pl.LightningModule):
         if fine_tuning:
             self.loss_func = QIBCompositeLoss()  # TODO: for later
         else:
-            self.loss_func = QIBLoss()
+            self.loss_func = QIBLoss(class_counts, positive_class)
 
         self.save_hyperparameters()
 
     def training_step(self, batch, batch_idx):
         X, Y = batch
-        X_hat, z = self.ae(X)
 
         if self.positive_class is not None:
-            score = self.mlp(z)
-            loss = self.loss_func(X_hat, Y, score)
+            score = self.mlp(X)
+            loss = self.loss_func(score, Y)
         else:
+            X_hat, z = self.ae(X)
             loss = self.loss_func(X_hat, X)
 
         self.log(
@@ -172,12 +173,12 @@ class QIBModel(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         X, Y = batch
-        X_hat, z = self.ae(X)
 
         if self.positive_class is not None:
-            score = self.mlp(z)
-            loss = self.loss_func(score, Y, self.positive_class)
+            score = self.mlp(X)
+            loss = self.loss_func(score, Y)
         else:
+            X_hat, z = self.ae(X)
             loss = self.loss_func(X_hat, X)
 
         self.log(
@@ -212,14 +213,35 @@ class QIBModel(pl.LightningModule):
 
 
 class QIBLoss(torch.nn.Module):
-    def __init__(self, alpha: float = 1.0) -> None:
+    def __init__(self, class_sample_counts, positive_class, alpha: float = 1.0) -> None:
         super().__init__()
         self.alpha = alpha
+        self.positive_class = positive_class
 
-    def forward(self, pred, target, positive_class=None):
-        if positive_class is not None:
-            # TODO: Missing class weights
-            return torch.nn.functional.cross_entropy(pred, target)
+        # Total number of samples
+        N = sum(class_sample_counts)
+
+        # Calculate the weight for the positive class
+        positive_weight = N / (2 * class_sample_counts[positive_class])
+
+        # Sum the weights of all other classes for the negative class
+        negative_weight = sum(
+            N / (2 * class_sample_counts[i])
+            for i in range(len(class_sample_counts))
+            if i != positive_class
+        )
+
+        self.class_weights = torch.tensor([negative_weight, positive_weight])
+
+    def forward(self, pred, target):
+        if self.positive_class is not None:
+            pred = pred.squeeze()
+            pred_binary = (pred >= 0.5).float()
+            target = target.float()
+
+            return torch.nn.functional.binary_cross_entropy_with_logits(
+                pred_binary, target, pos_weight=self.class_weights[1]
+            )
         else:
             return torch.nn.functional.mse_loss(pred, target)
 

@@ -59,7 +59,7 @@ def objective(trial):
         lr_decay = 0.96
 
     # Data
-    dataset = Dataset(args.dataset_path)
+    dataset = Dataset(args.dataset_path, positive_class=args.positive_class)
     train_split = 0.9
 
     # Get indices for train/test split
@@ -85,6 +85,11 @@ def objective(trial):
     print(f"Feature batch shape: {train_features.size()}")
     print(f"Labels batch shape: {train_labels.size()}")
     in_dim, out_dim = dataset.get_dims()
+    
+    if args.positive_class is not None:
+        class_counts = dataset.get_class_sample_counts()
+    else:
+        class_counts = None
 
     # Model architecture
     model = QIBModel(
@@ -97,6 +102,7 @@ def objective(trial):
         # fine_tuning = False,
         lr=lr,
         lr_decay=lr_decay,
+        class_counts=class_counts
     )
 
     # # Weights Initialization

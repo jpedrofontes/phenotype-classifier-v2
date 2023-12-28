@@ -179,7 +179,21 @@ class Dataset(torch.utils.data.Dataset):
         if self.positive_class is None:
             return (self.crop_size, 1)
         else:
-            return(len(self.z_data.columns) - 1, 1)
+            return (len(self.z_data.columns) - 1, 1)
+
+    def get_class_sample_counts(self):
+        if self.positive_class is not None:
+            # Assuming the last column in 'self.z_data' contains the class labels
+            labels = self.z_data.iloc[:, -1]
+
+            # Count the occurrences of each label
+            class_counts = labels.value_counts().sort_index()
+
+            return class_counts.tolist()
+        else:
+            raise ValueError(
+                "class_sample_counts is only available when positive_class is not None"
+            )
 
 
 if __name__ == "__main__":
