@@ -16,4 +16,4 @@ source /home/mguevaral/jpedro/phenotype-classifier-v2/venv/bin/activate
 module load CUDA
 module load cuDNN
 
-python /home/mguevaral/jpedro/phenotype-classifier-v2/src/dataset.py /data/mguevaral/crop_bbox/ /home/mguevaral/jpedro/phenotype-classifier-v2/models/val_loss=0.0072.ckpt /data/mguevaral/phenotype-classifier-v2/z_data.csv 
+python /home/mguevaral/jpedro/phenotype-classifier-v2/src/dataset.py /data/mguevaral/crop_bbox/ /home/mguevaral/jpedro/phenotype-classifier-v2/models/val_loss=0.0085.ckpt /data/mguevaral/phenotype-classifier-v2/z_data.csv 

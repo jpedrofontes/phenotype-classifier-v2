@@ -1,4 +1,3 @@
-import argparse
 import glob
 import os
 import re
@@ -206,15 +205,15 @@ if __name__ == "__main__":
     # Best params for auto encoder
     # TODO: Read from json config
     model_params = {
-        "input_dim": (64, 128, 128),
-        "ae_hidden_dims": [64, 32],
-        "latent_dim": 128,
-        "positive_class": None,
-        "mlp_layers": [],
+        "ae_hidden_dims": [32, 32, 128, 16],
         "dropout_rate": 0.1,
         "fine_tuning": False,
-        "lr": 1e-6,
-        "lr_decay": 0.96,
+        "input_dim": (64, 128, 128),
+        "latent_dim": 256,
+        "lr": 0.0007362490622651884,
+        "lr_decay": 0.9457240180432849,
+        "mlp_layers": [],
+        "positive_class": None,
     }
 
     # Load the MRI dataset

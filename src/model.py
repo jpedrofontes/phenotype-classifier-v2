@@ -1,6 +1,7 @@
 from typing import Any
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 import torch
+import torchmetrics
 
 
 class MLP(torch.nn.Module):
@@ -122,14 +123,14 @@ class QIBModel(pl.LightningModule):
     def __init__(
         self,
         input_dim: (int, int, int) = (64, 128, 128),
-        ae_hidden_dims: [int] = [512, 256],
-        latent_dim: int = 128,
+        ae_hidden_dims: [int] = [16, 128, 32, 32],
+        latent_dim: int = 256,
         positive_class: int = None,
         mlp_layers: [int] = None,
-        dropout_rate: float = 0.5,
+        dropout_rate: float = 0.1,
         fine_tuning: bool = False,
-        lr: float = 1e-3,
-        lr_decay: float = 0.99,
+        lr: float = 0.0007362490622651884,
+        lr_decay: float = 0.9457240180432849,
         class_counts: list = None,
     ):
         super().__init__()
@@ -138,6 +139,11 @@ class QIBModel(pl.LightningModule):
 
         if positive_class is not None:
             self.mlp = MLP(latent_dim, mlp_layers, dropout_rate)
+            self.acc_func = torchmetrics.classification.BinaryAccuracy()
+            self.auc_func = torchmetrics.classification.BinaryAUROC(thresholds=None)
+            self.precision_func = torchmetrics.classification.BinaryPrecision()
+            self.recall_func = torchmetrics.classification.BinaryRecall()
+            self.f1_score_func = torchmetrics.classification.BinaryF1Score()
         else:
             self.ae = AutoEncoder(input_dim, ae_hidden_dims, latent_dim, dropout_rate)
 
@@ -148,6 +154,7 @@ class QIBModel(pl.LightningModule):
             self.loss_func = QIBLoss(class_counts, positive_class)
 
         self.save_hyperparameters()
+        print(self.hparams)
 
     def training_step(self, batch, batch_idx):
         X, Y = batch
@@ -157,6 +164,57 @@ class QIBModel(pl.LightningModule):
             score = score.view(-1)
             Y = Y.view(-1)
             loss = self.loss_func(score, Y)
+            acc = self.acc_func(score, Y)
+            auc = self.auc_func(score, Y)
+            precision = self.precision_func(score, Y)
+            recall = self.recall_func(score, Y)
+            f1_score = self.f1_score_func(score, Y)
+
+            self.log(
+                "acc",
+                acc,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+            )
+            self.log(
+                "auc",
+                auc,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+            )
+            self.log(
+                "precision",
+                precision,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+            )
+            self.log(
+                "recall",
+                recall,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+            )
+            self.log(
+                "f1_score",
+                f1_score,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+            )
         else:
             X_hat, z = self.ae(X)
             loss = self.loss_func(X_hat, X)
@@ -181,6 +239,57 @@ class QIBModel(pl.LightningModule):
             score = score.view(-1)
             Y = Y.view(-1)
             loss = self.loss_func(score, Y)
+            acc = self.acc_func(score, Y)
+            auc = self.auc_func(score, Y)
+            precision = self.precision_func(score, Y)
+            recall = self.recall_func(score, Y)
+            f1_score = self.f1_score_func(score, Y)
+
+            self.log(
+                "val_acc",
+                acc,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+            )
+            self.log(
+                "val_auc",
+                auc,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+            )
+            self.log(
+                "val_precision",
+                precision,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+            )
+            self.log(
+                "val_recall",
+                recall,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+            )
+            self.log(
+                "val_f1_score",
+                f1_score,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+                sync_dist=True,
+            )
         else:
             X_hat, z = self.ae(X)
             loss = self.loss_func(X_hat, X)
@@ -222,20 +331,21 @@ class QIBLoss(torch.nn.Module):
         self.alpha = alpha
         self.positive_class = positive_class
 
-        # Total number of samples
-        N = sum(class_sample_counts)
+        if self.positive_class is not None:
+            # Total number of samples
+            N = sum(class_sample_counts)
 
-        # Calculate the weight for the positive class
-        positive_weight = N / (2 * class_sample_counts[positive_class])
+            # Calculate the weight for the positive class
+            positive_weight = N / (2 * class_sample_counts[positive_class])
 
-        # Sum the weights of all other classes for the negative class
-        negative_weight = sum(
-            N / (2 * class_sample_counts[i])
-            for i in range(len(class_sample_counts))
-            if i != positive_class
-        )
+            # Sum the weights of all other classes for the negative class
+            negative_weight = sum(
+                N / (2 * class_sample_counts[i])
+                for i in range(len(class_sample_counts))
+                if i != positive_class
+            )
 
-        self.class_weights = torch.tensor([negative_weight, positive_weight])
+            self.class_weights = torch.tensor([negative_weight, positive_weight])
 
     def forward(self, pred, target):
         if self.positive_class is not None:
