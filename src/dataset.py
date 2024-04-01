@@ -1,12 +1,15 @@
+import copy
 import glob
 import os
 import re
 
 import numpy as np
 import pandas as pd
+import torch
+from imblearn.under_sampling import NearMiss
 from PIL import Image
 from scipy import ndimage
-import torch
+from sklearn.model_selection import train_test_split
 
 phenotypes = {
     0: "Luminal A",
@@ -16,15 +19,22 @@ phenotypes = {
 }
 
 
-class Dataset(torch.utils.data.Dataset):
+class BreastCancerDataset(torch.utils.data.Dataset):
+
     def __init__(
-        self, base_path: str, crop_size=(64, 128, 128), positive_class: int = None
+        self,
+        base_path: str,
+        crop_size=(64, 128, 128),
+        positive_class: int = None,
+        batch_size: int = 512,
     ):
         super().__init__()
+        self.mode = "train"
         self.base_path = base_path
         self.crop_size = crop_size
         self.volumes = dict()
         self.positive_class = positive_class
+        self.batch_size = batch_size
 
         if self.positive_class is None:
             # Read class csv file
@@ -78,29 +88,105 @@ class Dataset(torch.utils.data.Dataset):
                         ]
                         self.volumes[volume_name]["phenotype"] = phenotype
 
+            # Apply the undersampling transformation to the dataset
+            volumes_idx = list(self.volumes.keys())
+            phenotypes = [self.volumes[v]["phenotype"] for v in volumes_idx]
+            nearmiss = NearMiss(version=1, n_neighbors=3)
+            volumes_idx_resampled, phenotypes_resampled = nearmiss.fit_resample(
+                np.array(volumes_idx).reshape(-1, 1), phenotypes
+            )
+
+            # Rebuild volumes with balanced data
+            balanced_volumes = {
+                volumes_idx[i]: self.volumes[volumes_idx[i]]
+                for i in volumes_idx_resampled.flatten()
+            }
+            self.volumes = balanced_volumes
             self.volumes_idx = list(self.volumes.keys())
+
+            # Calculate class counts and weights as before
+            self.class_counts = {}
+            for idx in self.volumes_idx:
+                y = self.volumes[idx]["phenotype"]
+                if y not in self.class_counts:
+                    self.class_counts[y] = 1
+                else:
+                    self.class_counts[y] += 1
+
+            total_samples = sum(self.class_counts.values())
+            self.class_weights = {
+                class_label: total_samples / count
+                for class_label, count in self.class_counts.items()
+            }
+
+            # Normalize the weights
+            max_weight = max(self.class_weights.values())
+            self.class_weights = {
+                k: v / max_weight for k, v in self.class_weights.items()
+            }
+
         else:
-            self.z_data = pd.read_csv(os.path.join(self.base_path, "z_data.csv"))
+            # Read dataset
+            df = pd.read_csv(os.path.join(self.base_path, "z_data.csv"), header=None)
+            self.z_data = df
+            X, y = df.iloc[:, :-1], df.iloc[:, -1]
+
+            # Edit phenotype according to positive class
+            y = y.apply(lambda label: 1 if label == self.positive_class else 0)
+
+            # Split train and test datasets
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.1, random_state=123
+            )
+
+            # Apply the undersampling transformation to the dataset
+            undersampler = NearMiss(version=1, n_neighbors=3)
+            self.X_train, self.y_train = undersampler.fit_resample(X_train, y_train)
+            # TODO: add discarded samples to test
+            self.X_test, self.y_test = X_test, y_test
+
+            # Calculate class counts
+            self.train_counts = {
+                '0': len(self.y_train[self.y_train == 0]),
+                '1': len(self.y_train[self.y_train == 1])
+            } 
+            self.test_counts = {
+                "0": len(self.y_test[self.y_test == 0]),
+                "1": len(self.y_test[self.y_test == 1]),
+            }
+
+    def set_mode(self, mode: str):
+        self.mode = mode
 
     def __len__(self):
         if self.positive_class is None:
-            return len(self.volumes_idx)
+            size = len(self.volumes_idx)
         else:
-            return len(self.z_data)
+            # Return the length of the dataset based on the mode
+            if self.mode == "train":
+                size = len(self.X_train)
+            elif self.mode == "test":
+                size = len(self.X_test)
+            else:
+                raise ValueError("Invalid mode set for Dataset")
+
+        return size
 
     def __getitem__(self, idx: int):
         if self.positive_class is None:
             X = self.process_scan(self.volumes_idx[idx])
-
-            # Consider one phenotype as 1 and the other as 0
             y = self.volumes[self.volumes_idx[idx]]["phenotype"]
-
         else:
-            row = self.z_data.iloc[idx]
-            features = row.iloc[:-1].to_numpy()
-            label = 1 if row.iloc[-1] == self.positive_class else 0
-            X = torch.tensor(features, dtype=torch.float32)
-            y = torch.tensor(label, dtype=torch.int)
+            if self.mode == "train":
+                X = self.X_train.iloc[idx, :]
+                y = self.y_train.iloc[idx]
+            elif self.mode == "test":
+                X = self.X_test.iloc[idx, :]
+                y = self.y_test.iloc[idx]
+
+            # Convert to appropriate tensor format
+            X = torch.tensor(X, dtype=torch.float32)
+            y = torch.tensor(y, dtype=torch.float32)
 
         return X, y
 
@@ -182,17 +268,32 @@ class Dataset(torch.utils.data.Dataset):
 
     def get_class_sample_counts(self):
         if self.positive_class is not None:
-            # Assuming the last column in 'self.z_data' contains the class labels
-            labels = self.z_data.iloc[:, -1]
-
-            # Count the occurrences of each label
-            class_counts = labels.value_counts().sort_index()
-
-            return class_counts.tolist()
+            if self.mode == "train":
+                return self.train_counts
+            elif self.mode == "test":
+                return self.test_counts
         else:
             raise ValueError(
                 "class_sample_counts is only available when positive_class is not None"
             )
+
+    def train_dataloader(self):
+        # Create and return a DataLoader for the training dataset
+        dataset = copy.deepcopy(self)
+        dataset.set_mode("train")
+
+        return torch.utils.data.DataLoader(
+            dataset, batch_size=self.batch_size, shuffle=True, num_workers=4
+        )
+
+    def val_dataloader(self):
+        # Create and return a DataLoader for the testing dataset
+        dataset = copy.deepcopy(self)
+        dataset.set_mode("test")
+
+        return torch.utils.data.DataLoader(
+            dataset, batch_size=self.batch_size, shuffle=False, num_workers=4
+        )
 
 
 if __name__ == "__main__":
@@ -217,7 +318,7 @@ if __name__ == "__main__":
     }
 
     # Load the MRI dataset
-    dataset = Dataset(sys.argv[1])
+    dataset = BreastCancerDataset(sys.argv[1])
     dataloader = torch.utils.data.DataLoader(
         dataset, batch_size=1, shuffle=True, num_workers=128
     )

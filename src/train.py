@@ -18,7 +18,7 @@ import torch
 torch.cuda.empty_cache()
 torch.set_float32_matmul_precision("medium")
 
-from dataset import Dataset, phenotypes
+from dataset import BreastCancerDataset, phenotypes
 from model import QIBModel
 
 
@@ -56,23 +56,14 @@ def objective(trial):
         ae_layers = [32, 32, 128, 16]
         latent_dim = 256
         if args.positive_class is not None:
-            mlp_layers = [16, 32, 128, 32, 16, 64, 64, 32, 128, 64]
+            mlp_layers = [512, 256, 64]
         else:
             mlp_layers = []
-        dropout_rate = 0.1
-        lr = 0.020037704053394004  # 0.0007362490622651884
-        lr_decay = 0.9558576064076237  # 0.9457240180432849
+        dropout_rate = 0.0
+        lr = 0.001
+        lr_decay = 0.99
 
-    # Dataset insights
-    train_features, train_labels = next(iter(train_dataloader))
-    print(f"Feature batch shape: {train_features.size()}")
-    print(f"Labels batch shape: {train_labels.size()}")
     in_dim, out_dim = dataset.get_dims()
-
-    if args.positive_class is not None:
-        class_counts = dataset.get_class_sample_counts()
-    else:
-        class_counts = None
 
     # Model architecture
     model = QIBModel(
@@ -85,7 +76,7 @@ def objective(trial):
         # fine_tuning = False,
         lr=lr,
         lr_decay=lr_decay,
-        class_counts=class_counts,
+        class_weights=dataset.class_weights,
     )
 
     # # Weights Initialization
@@ -104,12 +95,6 @@ def objective(trial):
         pl.callbacks.early_stopping.EarlyStopping(
             monitor="val_loss", patience=10, verbose=True, mode="min", min_delta=0.001
         ),
-        pl.callbacks.model_checkpoint.ModelCheckpoint(
-            dirpath=args.output_path,
-            filename="{val_loss:.4f}",
-            monitor="val_loss",
-            save_top_k=2,
-        ),
         # pl.callbacks.StochasticWeightAveraging(swa_lrs=1e-2),
     ]
 
@@ -117,18 +102,30 @@ def objective(trial):
         callbacks.append(
             op.integration.PyTorchLightningPruningCallback(trial, monitor="val_loss")
         )
+    else:
+        callbacks.append(
+            pl.callbacks.model_checkpoint.ModelCheckpoint(
+                dirpath=args.output_path,
+                filename="{val_loss:.4f}",
+                monitor="val_loss",
+                save_top_k=2,
+            ),
+        )
 
     logger = pl.loggers.TensorBoardLogger(args.logs_path)
     trainer = pl.Trainer(
         max_epochs=max_epochs,
         callbacks=callbacks,
-        precision="16-mixed",
+        # precision="16-mixed",
         log_every_n_steps=1,
         logger=logger,
-        enable_progress_bar=False,
+        enable_progress_bar=True,
     )
-    trainer.fit(model, train_dataloader, test_dataloader)
+    trainer.fit(model, dataset.train_dataloader(), dataset.val_dataloader())
     print("Done!")
+
+    confusion_matrix_df = model.evaluate_on_test_data(dataset.val_dataloader())
+    print(confusion_matrix_df)
 
     # Evaluate the model
     val_loss = trainer.callback_metrics["val_loss"].item()
@@ -159,26 +156,13 @@ if __name__ == "__main__":
     torch.manual_seed(123)
 
     # Data
-    batch_size = 128
-    dataset = Dataset(args.dataset_path, positive_class=args.positive_class)
-    train_split = 0.9
+    batch_size = 512
 
-    # Get indices for train/test split
-    indices = list(range(len(dataset)))
-    split = int(np.floor(train_split * len(dataset)))
-    np.random.shuffle(indices)
-    train_indices, test_indices = indices[:split], indices[split:]
-
-    # Create train abset(dataset, train_indices)
-    train_dataset = torch.utils.data.Subset(dataset, train_indices)
-    test_dataset = torch.utils.data.Subset(dataset, test_indices)
-
-    # Create data loaders
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=8
-    )
-    test_dataloader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=batch_size, shuffle=False, num_workers=8
+    # Initialize DataModule
+    dataset = BreastCancerDataset(
+        base_path=args.dataset_path,
+        positive_class=args.positive_class,
+        batch_size=batch_size,
     )
 
     if args.positive_class is not None:

@@ -1,10 +1,12 @@
-from typing import Any
 import lightning.pytorch as pl
+import pandas as pd
 import torch
 import torchmetrics
+from sklearn.metrics import confusion_matrix
 
 
 class MLP(torch.nn.Module):
+    
     def __init__(self, input_dim, layers=[512, 256, 128, 64], dropout_rate=0.1) -> None:
         super().__init__()
         layers_list = []
@@ -12,12 +14,12 @@ class MLP(torch.nn.Module):
 
         for layer_dim in layers:
             layers_list.append(torch.nn.Linear(prev_dim, layer_dim))
-            layers_list.append(torch.nn.Tanh())
+            layers_list.append(torch.nn.ReLU())
             prev_dim = layer_dim
 
         layers_list.append(torch.nn.Dropout(dropout_rate))
         layers_list.append(torch.nn.Linear(prev_dim, 1))
-        layers_list.append(torch.nn.Tanh())
+        layers_list.append(torch.nn.Sigmoid())
         self.network = torch.nn.Sequential(*layers_list)
 
     def forward(self, x):
@@ -25,6 +27,7 @@ class MLP(torch.nn.Module):
 
 
 class AutoEncoder(torch.nn.Module):
+    
     def __init__(self, input_dim, hidden_dims, latent_dim, dropout_rate):
         super(AutoEncoder, self).__init__()
         self.hidden_dims = hidden_dims
@@ -120,22 +123,24 @@ class AutoEncoder(torch.nn.Module):
 
 
 class QIBModel(pl.LightningModule):
+
     def __init__(
         self,
-        input_dim: (int, int, int) = (64, 128, 128),
-        ae_hidden_dims: [int] = [16, 128, 32, 32],
+        input_dim: tuple[int, int, int] = (64, 128, 128),
+        ae_hidden_dims: list[int] = [16, 128, 32, 32],
         latent_dim: int = 256,
         positive_class: int = None,
-        mlp_layers: [int] = None,
+        mlp_layers: list[int] = None,
         dropout_rate: float = 0.1,
         fine_tuning: bool = False,
         lr: float = 0.0007362490622651884,
         lr_decay: float = 0.9457240180432849,
-        class_counts: list = None,
+        class_weights: dict = None,
     ):
         super().__init__()
 
         self.positive_class = positive_class
+        self.class_weights = class_weights
 
         if positive_class is not None:
             self.mlp = MLP(latent_dim, mlp_layers, dropout_rate)
@@ -151,7 +156,7 @@ class QIBModel(pl.LightningModule):
         if fine_tuning:
             self.loss_func = QIBCompositeLoss()  # TODO: for later
         else:
-            self.loss_func = QIBLoss(class_counts, positive_class)
+            self.loss_func = QIBLoss(positive_class)
 
         self.save_hyperparameters()
         print(self.hparams)
@@ -177,7 +182,6 @@ class QIBModel(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=False,
                 logger=True,
-                sync_dist=True,
             )
             self.log(
                 "auc",
@@ -186,7 +190,6 @@ class QIBModel(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=False,
                 logger=True,
-                sync_dist=True,
             )
             self.log(
                 "precision",
@@ -195,7 +198,6 @@ class QIBModel(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=False,
                 logger=True,
-                sync_dist=True,
             )
             self.log(
                 "recall",
@@ -204,7 +206,6 @@ class QIBModel(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=False,
                 logger=True,
-                sync_dist=True,
             )
             self.log(
                 "f1_score",
@@ -213,16 +214,16 @@ class QIBModel(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=False,
                 logger=True,
-                sync_dist=True,
             )
         else:
             X_hat, z = self.ae(X)
-            loss = self.loss_func(X_hat, X)
+            weights = self.__compute_weights(Y)
+            loss = self.loss_func(X_hat, X, weights)
 
         self.log(
             "loss",
             loss,
-            on_step=False,
+            on_step=True,
             on_epoch=True,
             prog_bar=True,
             logger=True,
@@ -252,7 +253,6 @@ class QIBModel(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=False,
                 logger=True,
-                sync_dist=True,
             )
             self.log(
                 "val_auc",
@@ -261,7 +261,6 @@ class QIBModel(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=False,
                 logger=True,
-                sync_dist=True,
             )
             self.log(
                 "val_precision",
@@ -270,7 +269,6 @@ class QIBModel(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=False,
                 logger=True,
-                sync_dist=True,
             )
             self.log(
                 "val_recall",
@@ -279,7 +277,6 @@ class QIBModel(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=False,
                 logger=True,
-                sync_dist=True,
             )
             self.log(
                 "val_f1_score",
@@ -288,16 +285,16 @@ class QIBModel(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=False,
                 logger=True,
-                sync_dist=True,
             )
         else:
             X_hat, z = self.ae(X)
-            loss = self.loss_func(X_hat, X)
+            weights = self.__compute_weights(Y)
+            loss = self.loss_func(X_hat, X, weights)
 
         self.log(
             "val_loss",
             loss,
-            on_step=False,
+            on_step=True,
             on_epoch=True,
             prog_bar=True,
             logger=True,
@@ -313,8 +310,42 @@ class QIBModel(pl.LightningModule):
         else:
             return self.mlp(x)
 
+    def __compute_weights(self, labels):
+        weights = torch.ones_like(labels, dtype=torch.float)
+        for class_label, weight in self.class_weights.items():
+            weights[labels == class_label] = weight
+        return weights
+
+    def evaluate_on_test_data(self, test_dataloader):
+        self.mlp.eval()  # Set the model to evaluation mode
+
+        all_predictions = []
+        all_labels = []
+
+        with torch.no_grad():
+            for data in test_dataloader:
+                features, labels = data
+                predictions = self.mlp(features)
+                # Convert predictions to binary labels
+                predictions = predictions.sigmoid() > 0.5  # Apply threshold if model outputs logits
+                all_predictions.extend(predictions.cpu().numpy())
+                all_labels.extend(labels.int().cpu().numpy())
+
+        # Build confusion matrix
+        cm = confusion_matrix(all_labels, all_predictions)
+
+        # Optionally, convert to DataFrame for better readability
+        cm_df = pd.DataFrame(
+            cm,
+            index=[f"Actual Class {i}" for i in range(len(cm))],
+            columns=[f"Predicted Class {i}" for i in range(len(cm))],
+        )
+
+        return cm_df
+
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
+        # optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
+        optimizer = torch.optim.SGD(self.parameters(), lr=self.hparams.lr)
         scheduler = torch.optim.lr_scheduler.ExponentialLR(
             optimizer, gamma=self.hparams.lr_decay
         )
@@ -326,37 +357,25 @@ class QIBModel(pl.LightningModule):
 
 
 class QIBLoss(torch.nn.Module):
-    def __init__(self, class_sample_counts, positive_class, alpha: float = 1.0) -> None:
+    
+    def __init__(self, positive_class, alpha: float = 1.0) -> None:
         super().__init__()
         self.alpha = alpha
         self.positive_class = positive_class
 
         if self.positive_class is not None:
-            # Total number of samples
-            N = sum(class_sample_counts)
+            self.bce_loss = torch.nn.BCELoss()
 
-            # Calculate the weight for the positive class
-            positive_weight = N / (2 * class_sample_counts[positive_class])
-
-            # Sum the weights of all other classes for the negative class
-            negative_weight = sum(
-                N / (2 * class_sample_counts[i])
-                for i in range(len(class_sample_counts))
-                if i != positive_class
-            )
-
-            self.class_weights = torch.tensor([negative_weight, positive_weight])
-
-    def forward(self, pred, target):
+    def forward(self, pred, target, weights):
         if self.positive_class is not None:
-            return torch.nn.functional.binary_cross_entropy_with_logits(
-                pred, target.float(), pos_weight=self.class_weights[1]
-            )
+            return self.bce_loss(pred, target)
         else:
-            return torch.nn.functional.mse_loss(pred, target)
+            # Weighted MSE Loss
+            return torch.mean(weights * (pred - target) ** 2)
 
 
 class QIBCompositeLoss(torch.nn.Module):
+    
     def __init__(self) -> None:
         super().__init__()
 
