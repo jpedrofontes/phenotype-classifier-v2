@@ -312,8 +312,10 @@ class QIBModel(pl.LightningModule):
 
     def __compute_weights(self, labels):
         weights = torch.ones_like(labels, dtype=torch.float)
+        
         for class_label, weight in self.class_weights.items():
             weights[labels == class_label] = weight
+            
         return weights
 
     def evaluate_on_test_data(self, test_dataloader):

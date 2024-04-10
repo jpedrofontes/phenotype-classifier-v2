@@ -24,90 +24,31 @@ class BreastCancerDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         base_path: str,
-        crop_size=(64, 128, 128),
+        mode="train",
         positive_class: int = None,
+        crop_size=(64, 128, 128),
         batch_size: int = 512,
     ):
-        super().__init__()
-        self.mode = "train"
         self.base_path = base_path
+
+        if mode not in ["train", "test"]:
+            raise ValueError("Invalid mode set for Dataset")
+
+        self.mode = mode
         self.crop_size = crop_size
-        self.volumes = dict()
         self.positive_class = positive_class
         self.batch_size = batch_size
+        self.volumes = {}
+        self.discarded_volumes = {}
 
         if self.positive_class is None:
-            # Read class csv file
-            classes_csv = pd.read_csv(os.path.join(self.base_path, "classes.csv"))
-
-            # Build dataset info
-            os.chdir(base_path)
-            print("Reading dataset...")
-
-            for file in glob.glob("*.jpg"):
-                # Get the case number of the image
-                match_case = re.search("Breast_MRI_[0-9]+", file)
-                case = file[match_case.start() : match_case.end()]
-
-                if case is None:
-                    print("will continue case none")
-                    continue
-
-                # Get the series of the image
-                match_series = re.search("_series#.+#_", file)
-                series = file[match_series.start() : match_series.end()]
-
-                if series is None:
-                    print("will continue series none")
-                    continue
-
-                # Save volume info
-                volume_name = "{}.{}".format(case, series)
-
-                # Match the case number with the phenotype class
-                phenotype = classes_csv.loc[classes_csv["patient_id"] == case][
-                    "mol_subtype"
-                ]
-
-                if phenotype is None:
-                    continue
-                else:
-                    phenotype = phenotype.tolist()[0]
-                    try:
-                        self.volumes[volume_name]["case"] = case
-                        self.volumes[volume_name]["slices"].append(
-                            os.path.join(base_path, file)
-                        )
-                        self.volumes[volume_name]["slices"].sort()
-                        self.volumes[volume_name]["phenotype"] = phenotype
-                    except:
-                        self.volumes[volume_name] = dict()
-                        self.volumes[volume_name]["case"] = case
-                        self.volumes[volume_name]["slices"] = [
-                            os.path.join(base_path, file)
-                        ]
-                        self.volumes[volume_name]["phenotype"] = phenotype
-
-            # Apply the undersampling transformation to the dataset
-            volumes_idx = list(self.volumes.keys())
-            phenotypes = [self.volumes[v]["phenotype"] for v in volumes_idx]
-            nearmiss = NearMiss(version=1, n_neighbors=3)
-            volumes_idx_resampled, phenotypes_resampled = nearmiss.fit_resample(
-                np.array(volumes_idx).reshape(-1, 1), phenotypes
-            )
-
-            # Rebuild volumes with balanced data
-            balanced_volumes = {
-                volumes_idx[i]: self.volumes[volumes_idx[i]]
-                for i in volumes_idx_resampled.flatten()
-            }
-            self.volumes = balanced_volumes
-            self.volumes_idx = list(self.volumes.keys())
-
-            # Calculate class counts and weights as before
+            self.__read_all_volumes()
+            self.__prepare_and_balance_ae_dataset()
             self.class_counts = {}
-            for idx in self.volumes_idx:
+
+            for idx in self.training_volumes:
                 y = self.volumes[idx]["phenotype"]
+
                 if y not in self.class_counts:
                     self.class_counts[y] = 1
                 else:
@@ -124,63 +65,147 @@ class BreastCancerDataset(torch.utils.data.Dataset):
             self.class_weights = {
                 k: v / max_weight for k, v in self.class_weights.items()
             }
-
         else:
-            # Read dataset
-            df = pd.read_csv(os.path.join(self.base_path, "z_data.csv"), header=None)
-            self.z_data = df
-            X, y = df.iloc[:, :-1], df.iloc[:, -1]
+            self.__read_dataset_for_mlp()
 
-            # Edit phenotype according to positive class
-            y = y.apply(lambda label: 1 if label == self.positive_class else 0)
+    def __read_all_volumes(self):
+        classes_csv = pd.read_csv(os.path.join(self.base_path, "classes.csv"))
 
-            # Split train and test datasets
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.1, random_state=123
-            )
+        for file_path in glob.glob(os.path.join(self.base_path, "*.jpg")):
+            file = os.path.basename(file_path)
 
-            # Apply the undersampling transformation to the dataset
-            undersampler = NearMiss(version=1, n_neighbors=3)
-            self.X_train, self.y_train = undersampler.fit_resample(X_train, y_train)
-            # TODO: add discarded samples to test
-            self.X_test, self.y_test = X_test, y_test
+            # Get the case number of the image
+            match_case = re.search("Breast_MRI_[0-9]+", file)
+            case = file[match_case.start() : match_case.end()]
 
-            # Calculate class counts
-            self.train_counts = {
-                '0': len(self.y_train[self.y_train == 0]),
-                '1': len(self.y_train[self.y_train == 1])
-            } 
-            self.test_counts = {
-                "0": len(self.y_test[self.y_test == 0]),
-                "1": len(self.y_test[self.y_test == 1]),
-            }
+            # Get the series of the image
+            match_series = re.search("_series#.+#_", file)
+            series = file[match_series.start() : match_series.end()]
+
+            if case is None or series is None:
+                continue
+
+            volume_name = f"{case}.{series}"
+
+            # Match the case number with the phenotype class
+            phenotype_row = classes_csv.loc[classes_csv['patient_id'] == case, 'mol_subtype']
+
+            if not phenotype_row.empty:
+                phenotype = phenotype_row.iloc[0]  
+            else:
+                continue
+
+            self.volumes.setdefault(
+                volume_name, {"case": case, "slices": [], "phenotype": phenotype}
+            )["slices"].append(file_path)
+
+    def __prepare_and_balance_ae_dataset(self):
+        all_volume_keys = list(self.volumes.keys())
+        train_keys, test_keys = train_test_split(
+            all_volume_keys, test_size=0.1, random_state=42
+        )
+
+        # Balance the training dataset
+        train_volumes = {k: self.volumes[k] for k in train_keys}
+        balanced_train_volumes, discarded_volumes = self.__balance_ae_dataset(
+            train_volumes
+        )
+
+        # Update training_volumes to only include keys of balanced volumes
+        self.training_volumes = list(balanced_train_volumes.keys())
+
+        # Combine original test keys with keys from discarded volumes for testing
+        self.testing_volumes = test_keys + list(discarded_volumes.keys())
+
+    def __balance_ae_dataset(self, volumes):
+        # Count phenotypes
+        phenotype_counts = {
+            phenotype: len([v for v in volumes.values() if v["phenotype"] == phenotype])
+            for phenotype in set(v["phenotype"] for v in volumes.values())
+        }
+
+        # Find the target balance count, which is the count of the second smallest class to avoid "discarding" too much data
+        target_count = sorted(phenotype_counts.values())[1]
+
+        balanced_volumes = {}
+        discarded_volumes = {}
+
+        for phenotype, vols in volumes.items():
+            if phenotype_counts[phenotype] > target_count:
+                selected_keys = np.random.choice(
+                    list(vols.keys()), size=target_count, replace=False
+                )
+                balanced_volumes.update({k: vols[k] for k in selected_keys})
+                discarded_keys = set(vols.keys()) - set(selected_keys)
+                discarded_volumes.update({k: vols[k] for k in discarded_keys})
+            else:
+                balanced_volumes.update(vols)
+
+        return balanced_volumes, discarded_volumes
+
+    def __read_dataset_for_mlp(self):
+        # Read dataset
+        df = pd.read_csv(os.path.join(self.base_path, "z_data.csv"), header=None)
+        self.z_data = df
+        X, y = df.iloc[:, :-1], df.iloc[:, -1]
+
+        # Edit phenotype according to positive class
+        y = y.apply(lambda label: 1 if label == self.positive_class else 0)
+
+        # Split train and test datasets
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.1, random_state=123
+        )
+
+        # Apply the undersampling transformation to the dataset
+        undersampler = NearMiss(version=1, n_neighbors=3)
+        self.X_train, self.y_train = undersampler.fit_resample(X_train, y_train)
+        # TODO: add discarded samples to test
+        self.X_test, self.y_test = X_test, y_test
+
+        # Calculate class counts
+        self.train_counts = {
+            "0": len(self.y_train[self.y_train == 0]),
+            "1": len(self.y_train[self.y_train == 1]),
+        }
+        self.test_counts = {
+            "0": len(self.y_test[self.y_test == 0]),
+            "1": len(self.y_test[self.y_test == 1]),
+        }
 
     def set_mode(self, mode: str):
         self.mode = mode
 
     def __len__(self):
         if self.positive_class is None:
-            size = len(self.volumes_idx)
+            if self.mode == "train":
+                size = len(self.training_volumes)
+            elif self.mode == "test":
+                size = len(self.testing_volumes)
         else:
-            # Return the length of the dataset based on the mode
             if self.mode == "train":
                 size = len(self.X_train)
             elif self.mode == "test":
                 size = len(self.X_test)
-            else:
-                raise ValueError("Invalid mode set for Dataset")
 
         return size
 
     def __getitem__(self, idx: int):
         if self.positive_class is None:
-            X = self.process_scan(self.volumes_idx[idx])
-            y = self.volumes[self.volumes_idx[idx]]["phenotype"]
+            # Determine the correct set of volume keys to use based on mode
+            volume_keys = (
+                self.training_volumes if self.mode == "train" else self.testing_volumes
+            )
+            volume_key = volume_keys[idx]
+
+            # Process the scan and fetch the label
+            X = self.process_scan(self.volumes[volume_key]["slices"])
+            y = self.volumes[volume_key]["phenotype"]
         else:
             if self.mode == "train":
                 X = self.X_train.iloc[idx, :]
                 y = self.y_train.iloc[idx]
-            elif self.mode == "test":
+            else:
                 X = self.X_test.iloc[idx, :]
                 y = self.y_test.iloc[idx]
 

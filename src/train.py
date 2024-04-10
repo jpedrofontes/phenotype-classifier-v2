@@ -124,8 +124,9 @@ def objective(trial):
     trainer.fit(model, dataset.train_dataloader(), dataset.val_dataloader())
     print("Done!")
 
-    confusion_matrix_df = model.evaluate_on_test_data(dataset.val_dataloader())
-    print(confusion_matrix_df)
+    if args.positive_class is not None:
+        confusion_matrix_df = model.evaluate_on_test_data(dataset.val_dataloader())
+        print(confusion_matrix_df)
 
     # Evaluate the model
     val_loss = trainer.callback_metrics["val_loss"].item()
