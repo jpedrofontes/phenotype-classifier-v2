@@ -119,27 +119,33 @@ class BreastCancerDataset(torch.utils.data.Dataset):
 
     def __balance_ae_dataset(self, volumes):
         # Count phenotypes
-        phenotype_counts = {
-            phenotype: len([v for v in volumes.values() if v["phenotype"] == phenotype])
-            for phenotype in set(v["phenotype"] for v in volumes.values())
-        }
+        phenotype_counts = {}
+        for key, volume_data in volumes.items():
+            phenotype = volume_data["phenotype"]
+            if phenotype not in phenotype_counts:
+                phenotype_counts[phenotype] = []
+            phenotype_counts[phenotype].append(key)
 
         # Find the target balance count, which is the count of the second smallest class to avoid "discarding" too much data
-        target_count = sorted(phenotype_counts.values())[1]
+        target_counts = sorted([len(keys) for keys in phenotype_counts.values()])
+        if len(target_counts) > 1:
+            target_count = target_counts[1]
+        else:
+            return volumes, {}  # If not enough classes to balance, return as is
 
         balanced_volumes = {}
         discarded_volumes = {}
 
-        for phenotype, vols in volumes.items():
-            if phenotype_counts[phenotype] > target_count:
-                selected_keys = np.random.choice(
-                    list(vols.keys()), size=target_count, replace=False
-                )
-                balanced_volumes.update({k: vols[k] for k in selected_keys})
-                discarded_keys = set(vols.keys()) - set(selected_keys)
-                discarded_volumes.update({k: vols[k] for k in discarded_keys})
+        for phenotype, keys in phenotype_counts.items():
+            if len(keys) > target_count:
+                selected_keys = np.random.choice(keys, size=target_count, replace=False)
+                for key in selected_keys:
+                    balanced_volumes[key] = volumes[key]
+                for key in set(keys) - set(selected_keys):
+                    discarded_volumes[key] = volumes[key]
             else:
-                balanced_volumes.update(vols)
+                for key in keys:
+                    balanced_volumes[key] = volumes[key]
 
         return balanced_volumes, discarded_volumes
 
