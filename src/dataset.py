@@ -205,7 +205,7 @@ class BreastCancerDataset(torch.utils.data.Dataset):
             volume_key = volume_keys[idx]
 
             # Process the scan and fetch the label
-            X = self.process_scan(self.volumes[volume_key]["slices"])
+            X = self.process_scan(volume_key)
             y = self.volumes[volume_key]["phenotype"]
         else:
             if self.mode == "train":
