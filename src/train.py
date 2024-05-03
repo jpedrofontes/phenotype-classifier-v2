@@ -36,6 +36,7 @@ def objective(trial):
                         f"mlp_units_l{i}", [256, 512, 1024, 2048, 4096]
                     )
                 )
+                
             latent_dim = 256
             ae_layers = [32, 32, 128, 16]
         else:
@@ -46,6 +47,7 @@ def objective(trial):
                 ae_layers.append(
                     trial.suggest_categorical(f"ae_units_l{i}", [16, 32, 64, 128, 256])
                 )
+                
             latent_dim = trial.suggest_categorical("latent_dim", [16, 32, 64, 128, 256])
             mlp_layers = []
 
@@ -55,10 +57,12 @@ def objective(trial):
     else:
         ae_layers = [32, 32, 128, 16]
         latent_dim = 256
+        
         if args.positive_class is not None:
             mlp_layers = [512, 256, 64]
         else:
             mlp_layers = []
+            
         dropout_rate = 0.0
         lr = 0.001
         lr_decay = 0.99
@@ -79,23 +83,11 @@ def objective(trial):
         class_weights=dataset.class_weights,
     )
 
-    # # Weights Initialization
-    # def weights_init(m):
-    #     if isinstance(m, torch.nn.Linear):
-    #         torch.nn.init.kaiming_normal_(
-    #             m.weight, mode="fan_in", nonlinearity="leaky_relu"
-    #         )
-    #         if m.bias is not None:
-    #             torch.nn.init.zeros_(m.bias)
-
-    # model.apply(weights_init)
-
     # Train loop
     callbacks = [
         pl.callbacks.early_stopping.EarlyStopping(
             monitor="val_loss", patience=10, verbose=True, mode="min", min_delta=0.001
         ),
-        # pl.callbacks.StochasticWeightAveraging(swa_lrs=1e-2),
     ]
 
     if args.optimize_hyperparameters:
@@ -119,7 +111,7 @@ def objective(trial):
         # precision="16-mixed",
         log_every_n_steps=1,
         logger=logger,
-        enable_progress_bar=True,
+        enable_progress_bar=False,
     )
     trainer.fit(model, dataset.train_dataloader(), dataset.val_dataloader())
     print("Done!")
@@ -157,7 +149,7 @@ if __name__ == "__main__":
     torch.manual_seed(123)
 
     # Data
-    batch_size = 512
+    batch_size = 2
 
     # Initialize DataModule
     dataset = BreastCancerDataset(

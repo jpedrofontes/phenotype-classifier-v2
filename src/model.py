@@ -168,7 +168,7 @@ class QIBModel(pl.LightningModule):
             score = self.mlp(X)
             score = score.view(-1)
             Y = Y.view(-1)
-            loss = self.loss_func(score, Y)
+            loss = self.loss_func(score, Y, weights=self.class_weights.values())
             acc = self.acc_func(score, Y)
             auc = self.auc_func(score, Y)
             precision = self.precision_func(score, Y)
@@ -239,7 +239,7 @@ class QIBModel(pl.LightningModule):
             score = self.mlp(X)
             score = score.view(-1)
             Y = Y.view(-1)
-            loss = self.loss_func(score, Y)
+            loss = self.loss_func(score, Y, weights=self.class_weights.values())
             acc = self.acc_func(score, Y)
             auc = self.auc_func(score, Y)
             precision = self.precision_func(score, Y)
@@ -312,10 +312,10 @@ class QIBModel(pl.LightningModule):
 
     def __compute_weights(self, labels):
         weights = torch.ones_like(labels, dtype=torch.float)
-        
+
         for class_label, weight in self.class_weights.items():
             weights[labels == class_label] = weight
-            
+
         return weights
 
     def evaluate_on_test_data(self, test_dataloader):
@@ -359,7 +359,7 @@ class QIBModel(pl.LightningModule):
 
 
 class QIBLoss(torch.nn.Module):
-    
+
     def __init__(self, positive_class, alpha: float = 1.0) -> None:
         super().__init__()
         self.alpha = alpha
@@ -369,6 +369,8 @@ class QIBLoss(torch.nn.Module):
             self.bce_loss = torch.nn.BCELoss()
 
     def forward(self, pred, target, weights):
+        # weights = weights.view(-1, 1, 1, 1)
+
         if self.positive_class is not None:
             return self.bce_loss(pred, target)
         else:

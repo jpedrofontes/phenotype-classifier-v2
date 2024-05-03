@@ -54,6 +54,8 @@ class BreastCancerDataset(torch.utils.data.Dataset):
                 else:
                     self.class_counts[y] += 1
 
+            print("Class count: ", self.class_counts)
+
             total_samples = sum(self.class_counts.values())
             self.class_weights = {
                 class_label: total_samples / count
@@ -128,8 +130,9 @@ class BreastCancerDataset(torch.utils.data.Dataset):
 
         # Find the target balance count, which is the count of the second smallest class to avoid "discarding" too much data
         target_counts = sorted([len(keys) for keys in phenotype_counts.values()])
+
         if len(target_counts) > 1:
-            target_count = target_counts[1]
+            target_count = target_counts[2]
         else:
             return volumes, {}  # If not enough classes to balance, return as is
 
@@ -177,6 +180,18 @@ class BreastCancerDataset(torch.utils.data.Dataset):
         self.test_counts = {
             "0": len(self.y_test[self.y_test == 0]),
             "1": len(self.y_test[self.y_test == 1]),
+        }
+
+        total_samples = sum(self.train_counts.values())
+        self.class_weights = {
+            class_label: total_samples / count
+            for class_label, count in self.train_counts.items()
+        }
+        
+        # Normalize the weights
+        max_weight = max(self.class_weights.values())
+        self.class_weights = {
+            k: v / max_weight for k, v in self.class_weights.items()
         }
 
     def set_mode(self, mode: str):
@@ -338,12 +353,12 @@ if __name__ == "__main__":
     # TODO: Read from json config
     model_params = {
         "ae_hidden_dims": [32, 32, 128, 16],
-        "dropout_rate": 0.1,
+        "dropout_rate": 0.0,
         "fine_tuning": False,
         "input_dim": (64, 128, 128),
         "latent_dim": 256,
-        "lr": 0.0007362490622651884,
-        "lr_decay": 0.9457240180432849,
+        "lr": 0.001,
+        "lr_decay": 0.99,
         "mlp_layers": [],
         "positive_class": None,
     }
